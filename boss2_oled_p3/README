@@ -1,4 +1,4 @@
-This BOSS2 OLED application runs on Python 3.x 
+This BOSS2 OLED application runs on Python 3.x
 This application using for displaying status
 and controlling Allo boss2 amixer controls
 volume settings
@@ -19,18 +19,17 @@ Loging as root user either using sudo or password
 
 download boss2_oled_p3.tar.gz from the link using wget or scp
 
-	
-	cd /opt/
-        wget https://raw.githubusercontent.com/allocom/allo_boss2_oled_p3/main/boss2_oled_p3.tar.gz	
-	tar -xzvf boss2_oled_p3.tar.gz
-	cd boss2_oled_p3
-	./install_boss2_oled.sh 
+    cd /opt/
+        wget https://raw.githubusercontent.com/allocom/allo_boss2_oled_p3/main/boss2_oled_p3.tar.gz
+    tar -xzvf boss2_oled_p3.tar.gz
+    cd boss2_oled_p3
+    ./install_boss2_oled.sh
 
 Automatically downloads and installing  required packages for respective OS and reboots.
-every reboot starts boss2_oled display , checks the Boss2 sound device on startup, if no boss2 hardware application exit. 
+every reboot starts boss2_oled display , checks the Boss2 sound device on startup, if no boss2 hardware application exit.
 
 
-Other OS 
+Other OS
 --------
 if Python2 not installed install manually
 required packages after installing python2
@@ -52,12 +51,12 @@ Resize FS on webGUI
  tce-load -wi python3.8-rpi-gpio.tcz
  tce-load -wi  iproute2.tcz
 
-	sudo su
-	cd /opt/
-	wget https://raw.githubusercontent.com/allocom/allo_boss2_oled_p3/main/boss2_oled_p3.tar.gz
+    sudo su
+    cd /opt/
+    wget https://raw.githubusercontent.com/allocom/allo_boss2_oled_p3/main/boss2_oled_p3.tar.gz
         tar -xzvf boss2_oled_p3.tar.gz
 on web GUI Tweaks page user commands type below line and save
-	sh /opt/boss2_oled_p3/oled_run.sh 
+    sh /opt/boss2_oled_p3/oled_run.sh
 
 
 
@@ -117,17 +116,3 @@ $nano /etc/rc.local
 either delete or comment the below  2 lines
 boss2flag=1
 sudo python3 /opt/boss2_oled_p3/boss2_oled.py &
-
-
--------------------------********************************----------------------------------
-
-                                        END OF FILE
-
-
----------------------------******************************----------------------------------
-
-
-
-
-
-

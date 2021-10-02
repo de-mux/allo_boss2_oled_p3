@@ -3,7 +3,7 @@ HOSTNAME="$(uname -n)"
 if [ $HOSTNAME == "ropieeexl" ]
 then
 	ropieeeflag=2
-elif [ $HOSTNAME == "ropieee" ] 
+elif [ $HOSTNAME == "ropieee" ]
 then
 	ropieeeflag=1
 else
@@ -28,12 +28,12 @@ then
 		echo "****                                  ****"
 		echo "******************************************"
 		echo "******************************************"
-		sudo apt-get -y update 
+		sudo apt-get -y update
 		sudo apt-get -y install python3-pip
-		sudo apt-get -y install python3-smbus 
-		sudo apt-get -y install python3-pil 
-		#sudo apt-get -y install python-netifaces 
-		sudo raspi-config nonint do_i2c 0 
+		sudo apt-get -y install python3-smbus
+		sudo apt-get -y install python3-pil
+		#sudo apt-get -y install python-netifaces
+		sudo raspi-config nonint do_i2c 0
 		while read line
 		do
 			if [ "$line" == "boss2flag=1" ]
@@ -56,10 +56,10 @@ then
 		fi
 
 	else
-		#sudo apt-get -y update 
+		#sudo apt-get -y update
 		#sudo apt-get -y install python3-pip
-		#sudo apt-get -y install python3-smbus 
-		#sudo apt-get -y install python3-pil 
+		#sudo apt-get -y install python3-smbus
+		#sudo apt-get -y install python3-pil
                 echo "PYTHON version mismatch"
                 echo "PYTHON version 3 or above required"
 	fi
@@ -80,7 +80,7 @@ then
                 sudo apt-get -y install python3-smbus
                 sudo apt-get -y install python3-pil
 		sudo apt-get -y install python3-dev
-		#sudo apt-get -y install python-netifaces 
+		#sudo apt-get -y install python-netifaces
 		sudo pip install RPi.GPIO==0.7.0
                 while read line
                 do
@@ -129,7 +129,7 @@ then
                 sudo apt-get -y install i2c-tools
                 sleep 2
                 sudo raspi-config nonint do_i2c 0
-		#sudo apt-get -y install python-netifaces 
+		#sudo apt-get -y install python-netifaces
                 sudo cp /opt/boss2_oled_p3/boss2oled.service /etc/systemd/system/
                 sudo systemctl enable boss2oled.service
                 #sudo /boot/dietpi/dietpi-software install 72
@@ -156,13 +156,13 @@ then
 		echo "****                                  ****"
 		echo "******************************************"
 		echo "******************************************"
-		sudo apt-get -y update 
+		sudo apt-get -y update
                 sudo apt-get -y install python3-rpi.gpio
 		sudo apt-get -y install python3-pip
-		sudo apt-get -y install python3-smbus 
-		sudo apt-get -y install python3-pil 
-		#sudo apt-get -y install python-netifaces 
-		sudo raspi-config nonint do_i2c 0 
+		sudo apt-get -y install python3-smbus
+		sudo apt-get -y install python3-pil
+		#sudo apt-get -y install python-netifaces
+		sudo raspi-config nonint do_i2c 0
 		while read line
 		do
 			if [ "$line" == "boss2flag=1" ]
@@ -185,10 +185,10 @@ then
 		fi
 
 	else
-		#sudo apt-get -y update 
+		#sudo apt-get -y update
 		#sudo apt-get -y install python3-pip
-		#sudo apt-get -y install python3-smbus 
-		#sudo apt-get -y install python3-pil 
+		#sudo apt-get -y install python3-smbus
+		#sudo apt-get -y install python3-pil
                 echo "PYTHON version mismatch"
                 echo "PYTHON version 3.4 or higher required"
 	fi
