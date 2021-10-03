@@ -15,6 +15,7 @@ from .SH1106FontLibNumbers1 import Number2
 
 MAX_BUFFER_LENGTH = 32
 WIDTH_PIXELS = 132
+COLUMNS = 16
 ROWS = 8
 PIXELS_PER_ROW = 8
 HEIGHT_PIXELS = ROWS * PIXELS_PER_ROW
@@ -60,6 +61,9 @@ class SH1106LCD:
      ----------------------------------------------------
 
     """
+
+    COLUMNS = COLUMNS
+    ROWS = ROWS
 
     SET_LOWER_COLUMN_ADDR = 0x00
     SET_HIGHER_COLUMN_ADDR = 0x10
@@ -173,7 +177,7 @@ class SH1106LCD:
         row_data = [0x00] * WIDTH_PIXELS
         self.sendData(row_data)
 
-    def clearScreen(self):
+    def clearScreen(self, keep_display_off=False):
         """Writes 0x00 to every address in the Display Data Ram
         effectively making the screen completely black.
         Should be called on first connection of the LCD as
@@ -185,7 +189,7 @@ class SH1106LCD:
             self.clearRow(row)
             self.__sendCommand(self.SET_LOWER_COLUMN_ADDR)  # reset column address
             self.__sendCommand(self.SET_HIGHER_COLUMN_ADDR)  # reset column address
-        if previous_state:
+        if previous_state and not keep_display_off:
             self.display_on()
 
     def setCursorPosition(self, row, col):

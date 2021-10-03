@@ -16,23 +16,22 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+from enum import auto, Enum, IntEnum
 import os
-import sys
-import RPi.GPIO as GPIO
-import time
-import subprocess
-
-if os.name != "posix":
-    sys.exit("platform not supported")
 import socket
-import fcntl
 import struct
+import sys
+import time
+
+import fcntl
 from Hardware.SH1106.SH1106LCD import SH1106LCD
 from Hardware.I2CConfig import i2cConfig
 import IRModule
+import RPi.GPIO as GPIO
 
+from alsa import AlsaMixerBoss2
+from utils import shell_cmd
 
-SUBPROCESS_TIMEOUT = 30
 SPLASH_SCREEN_TIMEOUT = 5
 
 IR_PIN = 16
@@ -43,22 +42,13 @@ SW4 = 8
 SW5 = 24
 RST = 12
 
-DE_CTRL = "PCM De-emphasis Filter"
-HP_CTRL = "PCM High-pass Filter"
-PH_CTRL = "PCM Phase Compensation"
-NON_CTRL = "PCM Nonoversample Emulate"
-HV_CTRL = "HV_Enable"
-SP_CTRL = "PCM Filter Speed"
-MA_CTRL = "Master"
-DIG_CTRL = "Digital"
-
 h_name = "Allo"
 A_CARD = "Boss2"
 A_CARD1 = "BOSS2"
 m_indx = 1
 f_indx = 1
-alsa_hvol = 230
-alsa_cvol = 230
+# alsa_hvol = 230
+# alsa_cvol = 230
 fil_sp = 0
 de_emp = 0
 non_os = 0
@@ -66,21 +56,14 @@ ph_comp = 0
 hv_en = 0
 hp_fil = 0
 ok_flag = 0
-card_num = 0
+# card_num = 0
 bit_rate = 0
 bit_format = 0
 last_bit_format = 0
-mute = 1
+# mute = 1
 sec_flag = 0
 # status_M = 0
-update_M = 0
 # filter_cur = 0
-filter_mod = 0
-bs1 = 0
-bs2 = 0
-bs3 = 0
-bs4 = 0
-bs5 = 0
 irp = 0
 irm = 0
 ir1 = 0
@@ -126,44 +109,110 @@ def remote_callback(code):
     return
 
 
-def volTimer():
-    global sec_flag
-    while True:
-        time.sleep(1)
-        sec_flag = 1
+class FrontPanelInterface:
+    def __init__(self):
+        self._switches = {
+            Switch.LEFT: SW1,
+            Switch.OK: SW2,
+            Switch.UP: SW3,
+            Switch.DOWN: SW4,
+            Switch.RIGHT: SW5,
+        }
+
+    def get_switch_state(self):
+        state = {switch_id: 0 for switch_id in self._switches}
+
+        for switch_id, pin in self._switches.items():
+            if GPIO.input(pin) != GPIO.HIGH:
+                state[switch_id] = 1
+        return state
 
 
-def update_status():
+class Screen(IntEnum):
+    INFO = 0
+    VOL = 0
+    MENU = 1
+    BOOT = 2
+    FILTER = 3
+    HV = 4
+    SP = 5
+    HP = 6
+    DE_EMPHASIS = 7
+    NON_OSAMP = 8
+    PHASE_COMPENSATION = 9
 
-    global mute
-    global hp_fil
-    global hv_en
-    global non_os
-    global ph_comp
-    global de_emp
-    global fil_sp
 
-    mute = getMuteStatus(MA_CTRL)
-    hp_fil = getMuteStatus(HP_CTRL)
-    hv_en = getMuteStatus(HV_CTRL)
-    non_os = getMuteStatus(NON_CTRL)
-    ph_comp = getMuteStatus(PH_CTRL)
-    de_emp = getMuteStatus(DE_CTRL)
-    fil_sp = getFilterStatus()
+class Switch(Enum):
+    UP = auto()
+    DOWN = auto()
+    LEFT = auto()
+    RIGHT = auto()
+    OK = auto()
 
 
 class GUI:
-    def __init__(self, lcd):
+    def __init__(self, lcd, alsa_interface):
+        self.lcd = lcd
+        self.alsa = alsa_interface
+        self.screen = Screen.INFO
+        self.fp_interface = FrontPanelInterface()
+        self._ip_lan = ""
+        self._ip_wan = ""
+        self._hostname = ""
         self._scr0_ref_count = 0
         self._LED_FLAG = 0
-        self.lcd = lcd
-        self.scr_num = 0
+
+    def display_splash(self):
+        lcd.display_off()
+        self._ip_lan = get_ip_address("eth0")
+        self._ip_wan = get_ip_address("wlan0")
+        h_name = "HOST:%s" % socket.gethostname()
+        lcd.displayStringNumber(self._ip_lan, 0, 0)
+        lcd.displayStringNumber(self._ip_wan, 6, 0)
+        lcd.displayString(h_name, 2, 0)
+        lcd.displayString(A_CARD1, 4, 0)
+        lcd.display_on()
+        time.sleep(SPLASH_SCREEN_TIMEOUT)
+        lcd.clearScreen(keep_display_off=True)
+
+    def display_err(self, msg):
+        col = int(self.lcd.COLUMNS / 2 - len(msg) / 2)
+        lcd.displayString(msg, row=4, col=col)
+        lcd.displayStringNumber(self._ip_lan, 0, 0)
+        lcd.displayStringNumber(self._ip_wan, 6, 0)
+
+    def _check_switches(self):
+        return self.fp_interface.get_switch_state()
+
+    def _volume_up(self):
+        alsa_cvol, _, _ = self.alsa.getVol()
+        alsa_hvol = alsa_cvol
+        if alsa_hvol < 255 and alsa_hvol >= 240:
+            alsa_hvol += 1
+        if alsa_hvol < 240 and alsa_hvol >= 210:
+            alsa_hvol += 3
+        if alsa_hvol < 210 and alsa_hvol >= 120:
+            alsa_hvol += 10
+        if alsa_hvol < 120 and alsa_hvol >= 0:
+            alsa_hvol += 30
+        self.alsa.setVol(alsa_hvol)
+
+    def _volume_down(self):
+        alsa_cvol, _, _ = self.alsa.getVol()
+        alsa_hvol = alsa_cvol
+        if alsa_hvol <= 255 and alsa_hvol > 240:
+            alsa_hvol -= 1
+        if alsa_hvol <= 240 and alsa_hvol > 210:
+            alsa_hvol -= 3
+        if alsa_hvol <= 210 and alsa_hvol > 120:
+            alsa_hvol -= 10
+        if alsa_hvol <= 120 and alsa_hvol > 0:
+            alsa_hvol -= 30
+        self.alsa.setVol(alsa_hvol)
 
     def do_update(self):
         global m_indx
-        # global w_ip
         global h_name
-        global alsa_hvol
         global alsa_cvol
         global f_indx
         global fil_sp
@@ -173,15 +222,9 @@ class GUI:
         global non_os
         global hv_en
         global ok_flag
-        global update_M
         global filter_mod
         global mute
         global sec_flag
-        global bs1
-        global bs2
-        global bs3
-        global bs4
-        global bs5
         global irm
         global irok
         global ir1
@@ -194,8 +237,7 @@ class GUI:
             self._LED_FLAG = 1
         elif led_off_counter == 1:
             self._LED_FLAG = 0
-
-        if led_off_counter > 950:
+        elif led_off_counter > 950:
             led_off_counter = 951
 
         if self._LED_FLAG == 1:
@@ -212,114 +254,75 @@ class GUI:
             sec_flag = 1
             self._scr0_ref_count = 0
 
-        if GPIO.input(SW1) == GPIO.HIGH:
-            time.sleep(0.04)
-        else:
-            time.sleep(0.04)
-            bs1 = 1
-            led_off_counter = 0
+        switches = self._check_switches()
 
-        if GPIO.input(SW2) == GPIO.HIGH:
-            time.sleep(0.04)
-        else:
-            time.sleep(0.04)
-            bs2 = 1
-            led_off_counter = 0
-
-        if GPIO.input(SW3) == GPIO.HIGH:
-            time.sleep(0.04)
-        else:
-            time.sleep(0.04)
-            bs3 = 1
-            led_off_counter = 0
-
-        if GPIO.input(SW4) == GPIO.HIGH:
-            time.sleep(0.04)
-        else:
-            time.sleep(0.04)
-            bs4 = 1
-            led_off_counter = 0
-
-        if GPIO.input(SW5) == GPIO.HIGH:
-            time.sleep(0.04)
-        else:
-            time.sleep(0.04)
-            bs5 = 1
-            led_off_counter = 0
-
-        if bs1 == 1 or ir1 == 1:
+        if switches[Switch.LEFT] == 1 or ir1 == 1:
             time.sleep(0.1)
-            bs1 = 0
             ir1 = 0
-            if self.scr_num == 0:
+            if self.screen == Screen.INFO:
                 self.lcd.clearScreen()
                 self.menuScr()
-            elif self.scr_num == 1:
+            elif self.screen == Screen.MENU:
                 self.screenVol()
-            elif self.scr_num == 2:
+            elif self.screen == Screen.BOOT:
                 self.menuScr()
-            elif self.scr_num == 3:
+            elif self.screen == Screen.FILTER:
                 self.menuScr()
-            elif self.scr_num == 4:
+            elif self.screen == Screen.HV:
                 if hv_en == 0:
                     hv_en = 1
                     self.hvScr4()
-            elif self.scr_num == 5:
+            elif self.screen == Screen.SP:
                 if fil_sp == 0:
                     fil_sp = 1
                     self.spScr5()
-            elif self.scr_num == 6:
+            elif self.screen == Screen.HP:
                 if hp_fil == 0:
                     hp_fil = 1
                     self.hpScr6()
-            elif self.scr_num == 7:
+            elif self.screen == Screen.DE_EMPHASIS:
                 if de_emp == 0:
                     de_emp = 1
                     self.deScr7()
-            elif self.scr_num == 8:
+            elif self.screen == Screen.NON_OSAMP:
                 if non_os == 0:
                     non_os = 1
                     self.nonScr8()
-            elif self.scr_num == 9:
+            elif self.screen == Screen.PHASE_COMPENSATION:
                 if ph_comp == 0:
                     ph_comp = 1
                     self.phScr9()
             else:
-                print(self.scr_num)
+                print(self.screen)
 
         if irm == 1:
             time.sleep(0.1)
             sec_flag = 1
             irm = 0
-            mute = getMuteStatus(MA_CTRL)
+            mute = self.alsa.getMuteStatus(self.alsa.CONTROL.MA_CTRL)
             if mute == 0:
-                update_M = 1
-                setMuteStatus(MA_CTRL)
-                setMuteStatus(DIG_CTRL)
+                self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 1)
+                self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 1)
             else:
-                update_M = 0
-                setMuteStatus(MA_CTRL)
-                setMuteStatus(DIG_CTRL)
+                self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 0)
+                self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 0)
 
-        if bs2 == 1 or irok == 1:
+        if switches[Switch.OK] == 1 or irok == 1:
             time.sleep(0.1)
-            bs2 = 0
             irm_nflag = 0
             if irok == 1:
                 irm_nflag = 1
                 irok = 0
-            if self.scr_num == 0 and irm_nflag == 0:
+            if self.screen == Screen.INFO and irm_nflag == 0:
                 sec_flag = 1
-                mute = getMuteStatus(MA_CTRL)
+                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.MA_CTRL)
                 if mute == 0:
-                    update_M = 1
-                    setMuteStatus(MA_CTRL)
-                    setMuteStatus(DIG_CTRL)
+                    self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 1)
+                    self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 1)
                 else:
-                    update_M = 0
-                    setMuteStatus(MA_CTRL)
-                    setMuteStatus(DIG_CTRL)
-            elif self.scr_num == 1:
+                    self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 0)
+                    self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 0)
+            elif self.screen == Screen.MENU:
                 if m_indx == 1:
                     self.bootScr()
                 elif m_indx == 2:
@@ -328,9 +331,9 @@ class GUI:
                     self.filtScr()
                 elif m_indx == 4:
                     self.spScr5()
-            elif self.scr_num == 2:
+            elif self.screen == Screen.BOOT:
                 self.menuScr()
-            elif self.scr_num == 3:
+            elif self.screen == Screen.FILTER:
                 if f_indx == 1:
                     self.phScr9()
                 elif f_indx == 2:
@@ -339,188 +342,145 @@ class GUI:
                     self.deScr7()
                 elif f_indx == 4:
                     self.nonScr8()
-            elif self.scr_num == 4:
+            elif self.screen == Screen.HV:
                 ok_flag = 0
-                mute = getMuteStatus(HV_CTRL)
+                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.HV_CTRL)
                 if mute != hv_en:
-                    update_M = hv_en
-                    setMuteStatus(HV_CTRL)
+                    self.alsa.setMuteStatus(self.alsa.CONTROL.HV_CTRL, hv_en)
                 self.menuScr()
-            elif self.scr_num == 5:
+            elif self.screen == Screen.SP:
                 ok_flag = 0
-                filter_cur = getFilterStatus()
+                filter_cur = self.alsa.getFilterStatus()
                 if filter_cur != fil_sp:
-                    filter_mod = fil_sp
-                    setFilterStatus()
+                    self.alsa.setFilterStatus(fil_sp)
                 self.menuScr()
-            elif self.scr_num == 6:
+            elif self.screen == Screen.HP:
                 ok_flag = 0
-                mute = getMuteStatus(HP_CTRL)
+                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.HP_CTRL)
                 if mute != hp_fil:
-                    update_M = hp_fil
-                    setMuteStatus(HP_CTRL)
+                    self.alsa.setMuteStatus(self.alsa.CONTROL.HP_CTRL, hp_fil)
                 self.filtScr()
-            elif self.scr_num == 7:
+            elif self.screen == Screen.DE_EMPHASIS:
                 ok_flag = 0
-                mute = getMuteStatus(DE_CTRL)
+                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.DE_CTRL)
                 if mute != de_emp:
-                    update_M = de_emp
-                    setMuteStatus(DE_CTRL)
+                    self.alsa.setMuteStatus(self.alsa.CONTROL.DE_CTRL, de_emp)
                 self.filtScr()
-            elif self.scr_num == 8:
+            elif self.screen == Screen.NON_OSAMP:
                 ok_flag = 0
-                mute = getMuteStatus(NON_CTRL)
+                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.NON_CTRL)
                 if mute != non_os:
-                    update_M = non_os
-                    setMuteStatus(NON_CTRL)
+                    self.alsa.setMuteStatus(self.alsa.CONTROL.NON_CTRL, non_os)
                 self.filtScr()
-            elif self.scr_num == 9:
+            elif self.screen == Screen.PHASE_COMPENSATION:
                 ok_flag = 0
-                mute = getMuteStatus(PH_CTRL)
+                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.PH_CTRL)
                 if mute != ph_comp:
-                    update_M = ph_comp
-                    setMuteStatus(PH_CTRL)
+                    self.alsa.setMuteStatus(self.alsa.CONTROL.PH_CTRL, ph_comp)
                 self.filtScr()
 
-        if bs3 == 1 or ir3 == 1:
+        if switches[Switch.UP] == 1 or ir3 == 1:
             time.sleep(0.1)
-            bs3 = 0
             ir3 = 0
-            if self.scr_num == 0:
-                getVol()
-                alsa_hvol = alsa_cvol
-                if alsa_hvol < 255 and alsa_hvol >= 240:
-                    alsa_hvol += 1
-                if alsa_hvol < 240 and alsa_hvol >= 210:
-                    alsa_hvol += 3
-                if alsa_hvol < 210 and alsa_hvol >= 120:
-                    alsa_hvol += 10
-                if alsa_hvol < 120 and alsa_hvol >= 0:
-                    alsa_hvol += 30
-                setVol()
+            if self.screen == Screen.INFO:
+                self._volume_up()
                 self.screenVol()
-            elif self.scr_num == 1:
+            elif self.screen == Screen.MENU:
                 if m_indx > 1:
                     m_indx -= 1
                 self.menuScr()
-            elif self.scr_num == 3:
+            elif self.screen == Screen.FILTER:
                 if f_indx > 1:
                     f_indx -= 1
                 self.filtScr()
 
-        if bs4 == 1 or ir4 == 1:
+        if switches[Switch.DOWN] == 1 or ir4 == 1:
             time.sleep(0.1)
-            bs4 = 0
             ir4 = 0
-            if self.scr_num == 0:
-                getVol()
-                alsa_hvol = alsa_cvol
-                if alsa_hvol <= 255 and alsa_hvol > 240:
-                    alsa_hvol -= 1
-                if alsa_hvol <= 240 and alsa_hvol > 210:
-                    alsa_hvol -= 3
-                if alsa_hvol <= 210 and alsa_hvol > 120:
-                    alsa_hvol -= 10
-                if alsa_hvol <= 120 and alsa_hvol > 0:
-                    alsa_hvol -= 30
-                setVol()
+            if self.screen == Screen.INFO:
+                self._volume_down()
                 self.screenVol()
-            elif self.scr_num == 1:
+            elif self.screen == Screen.MENU:
                 m_indx += 1
                 if m_indx > 4:
                     m_indx = 1
                 self.menuScr()
-            elif self.scr_num == 3:
+            elif self.screen == Screen.FILTER:
                 f_indx += 1
                 if f_indx > 4:
                     f_indx = 1
                 self.filtScr()
-            elif self.scr_num == 4:
+            elif self.screen == Screen.HV:
                 if ok_flag == 0:
                     ok_flag = 1
                 self.hvScr4()
-            elif self.scr_num == 5:
+            elif self.screen == Screen.SP:
                 if ok_flag == 0:
                     ok_flag = 1
-                self.self.spScr5()
-            elif self.scr_num == 6:
+                self.spScr5()
+            elif self.screen == Screen.HP:
                 if ok_flag == 0:
                     ok_flag = 1
                 self.self.hpScr6()
-            elif self.scr_num == 7:
+            elif self.screen == Screen.DE_EMPHASIS:
                 if ok_flag == 0:
                     ok_flag = 1
                 self.self.deScr7()
-            elif self.scr_num == 8:
+            elif self.screen == Screen.NON_OSAMP:
                 if ok_flag == 0:
                     ok_flag = 1
                 self.self.nonScr8()
-            elif self.scr_num == 9:
+            elif self.screen == Screen.PHASE_COMPENSATION:
                 if ok_flag == 0:
                     ok_flag = 1
                 self.self.phScr9()
 
-        if bs5 == 1 or ir5 == 1:
+        if switches[Switch.RIGHT] == 1 or ir5 == 1:
             time.sleep(0.1)
-            bs5 = 0
             ir5 = 0
-            if self.scr_num == 0:
+            if self.screen == Screen.INFO:
                 self.lcd.clearScreen()
                 self.menuScr()
-            elif self.scr_num == 1:
+            elif self.screen == Screen.MENU:
                 self.screenVol()
-            elif self.scr_num == 2:
+            elif self.screen == Screen.BOOT:
                 self.menuScr()
-            elif self.scr_num == 3:
+            elif self.screen == Screen.FILTER:
                 self.menuScr()
-            elif self.scr_num == 4:
+            elif self.screen == Screen.HV:
                 if hv_en == 1:
                     hv_en = 0
                 self.hvScr4()
-            elif self.scr_num == 5:
+            elif self.screen == Screen.SP:
                 if fil_sp == 1:
                     fil_sp = 0
                 self.spScr5()
-            elif self.scr_num == 6:
+            elif self.screen == Screen.HP:
                 if hp_fil == 1:
                     hp_fil = 0
                 self.hpScr6()
-            elif self.scr_num == 7:
+            elif self.screen == Screen.DE_EMPHASIS:
                 if de_emp == 1:
                     de_emp = 0
                 self.deScr7()
-            elif self.scr_num == 8:
+            elif self.screen == Screen.NON_OSAMP:
                 if non_os == 1:
                     non_os = 0
                 self.nonScr8()
-            elif self.scr_num == 9:
+            elif self.screen == Screen.PHASE_COMPENSATION:
                 if ph_comp == 1:
                     ph_comp = 0
                 self.phScr9()
 
         if sec_flag == 1:
-            if self.scr_num == 0:
+            if self.screen == Screen.INFO:
                 self.screenVol()
                 sec_flag = 0
         led_off_counter += 1
 
-    def bootScr(self):
-        global scr_num
-        if self.scr_num != 2:
-            self.scr_num = 2
-            lcd.clearScreen()
-        lcd.clearScreen()
-        h_ip = get_ip_address("eth0")
-        w_ip = get_ip_address("wlan0")
-        lcd.displayString(A_CARD1, 0, 0)
-        lcd.displayStringNumber(h_ip, 2, 0)
-        lcd.displayString(h_name, 4, 0)
-        lcd.displayStringNumber(w_ip, 6, 0)
-
     def infoScr(self):
-        global scr_num
-        if self.scr_num != 0:
-            self.scr_num = 0
+        if self.screen != Screen.INFO:
+            self.screen = Screen.INFO
             lcd.clearScreen()
 
         lcd.displayString("VOL", 1, 0)
@@ -529,28 +489,10 @@ class GUI:
         lcd.displayString("SR", 5, 0)
         lcd.displayString("44.1kHz", 5, 60)
 
-    def hvScr4(self):
-        global hv_en
-        global ok_flag
-        if self.scr_num != 4:
-            self.scr_num = 4
-            lcd.clearScreen()
-        lcd.displayString("HV ENABLE", 0, 20)
-        if hv_en == 0:
-            lcd.displayString("ON", 3, 20)
-            lcd.displayInvertedString("OFF", 3, 70)
-        else:
-            lcd.displayInvertedString("ON", 3, 20)
-            lcd.displayString("OFF", 3, 70)
-        if ok_flag == 1:
-            lcd.displayInvertedString("OK", 6, 50)
-        else:
-            lcd.displayString("OK", 6, 50)
-
     def menuScr(self):
         global m_indx
-        if self.scr_num != 1:
-            self.scr_num = 1
+        if self.screen != Screen.MENU:
+            self.screen = Screen.MENU
             lcd.clearScreen()
         if m_indx == 1:
             lcd.displayInvertedString("SYSINFO", 0, 0)
@@ -581,6 +523,18 @@ class GUI:
             else:
                 lcd.displayString("F-SPEED-SLO", 6, 0)
 
+    def bootScr(self):
+        if self.screen != Screen.BOOT:
+            self.screen = Screen.BOOT
+            lcd.clearScreen()
+        lcd.clearScreen()
+        self._ip_lan = get_ip_address("eth0")
+        self._ip_wan = get_ip_address("wlan0")
+        lcd.displayString(A_CARD1, 0, 0)
+        lcd.displayStringNumber(self._ip_lan, 2, 0)
+        lcd.displayString(h_name, 4, 0)
+        lcd.displayStringNumber(self._ip_wan, 6, 0)
+
     def filtScr(self):
         global fil_sp
         global hp_fil
@@ -588,8 +542,8 @@ class GUI:
         global non_os
         global ph_comp
         global f_indx
-        if self.scr_num != 3:
-            self.scr_num = 3
+        if self.screen != Screen.FILTER:
+            self.screen = Screen.FILTER
             lcd.clearScreen()
         if f_indx == 1:
             lcd.displayInvertedString("PHCOMP ", 0, 5)
@@ -649,11 +603,29 @@ class GUI:
             else:
                 lcd.displayString("EN", 6, 80)
 
+    def hvScr4(self):
+        global hv_en
+        global ok_flag
+        if self.screen != Screen.HV:
+            self.screen = Screen.HV
+            lcd.clearScreen()
+        lcd.displayString("HV ENABLE", 0, 20)
+        if hv_en == 0:
+            lcd.displayString("ON", 3, 20)
+            lcd.displayInvertedString("OFF", 3, 70)
+        else:
+            lcd.displayInvertedString("ON", 3, 20)
+            lcd.displayString("OFF", 3, 70)
+        if ok_flag == 1:
+            lcd.displayInvertedString("OK", 6, 50)
+        else:
+            lcd.displayString("OK", 6, 50)
+
     def spScr5(self):
         global fil_sp
         global ok_flag
-        if self.scr_num != 5:
-            self.scr_num = 5
+        if self.screen != Screen.SP:
+            self.screen = Screen.SP
             lcd.clearScreen()
         lcd.displayString("FILTER SPEED", 0, 5)
         if fil_sp == 0:
@@ -670,8 +642,8 @@ class GUI:
     def hpScr6(self):
         global ok_flag
         global hp_fil
-        if self.scr_num != 6:
-            self.scr_num = 6
+        if self.screen != Screen.HP:
+            self.screen = Screen.HP
             lcd.clearScreen()
         lcd.displayString("HP-FILT", 0, 20)
         if hp_fil == 0:
@@ -688,8 +660,8 @@ class GUI:
     def deScr7(self):
         global de_emp
         global ok_flag
-        if self.scr_num != 7:
-            self.scr_num = 7
+        if self.screen != Screen.DE_EMPHASIS:
+            self.screen = Screen.DE_EMPHASIS
             lcd.clearScreen()
         lcd.displayString("DE-EMPH", 0, 20)
         if de_emp == 0:
@@ -706,8 +678,8 @@ class GUI:
     def nonScr8(self):
         global non_os
         global ok_flag
-        if self.scr_num != 8:
-            self.scr_num = 8
+        if self.screen != Screen.NON_OSAMP:
+            self.screen = Screen.NON_OSAMP
             lcd.clearScreen()
         lcd.displayString("NON-OSAMP", 0, 20)
         if non_os == 0:
@@ -724,8 +696,8 @@ class GUI:
     def phScr9(self):
         global ph_comp
         global ok_flag
-        if self.scr_num != 9:
-            self.scr_num = 9
+        if self.screen != Screen.PHASE_COMPENSATION:
+            self.screen = Screen.PHASE_COMPENSATION
             lcd.clearScreen()
         lcd.displayString("PHA-COMP", 0, 20)
         if ph_comp == 0:
@@ -740,35 +712,71 @@ class GUI:
             lcd.displayString("OK", 6, 50)
 
     def screenVol(self):
-        global mute
-        if self.scr_num != 0:
-            self.scr_num = 0
+        # global mute
+        global bit_rate
+        global bit_format
+        global led_off_counter
+        global last_bit_format
+        if self.screen != Screen.INFO:
+            self.screen = Screen.INFO
             lcd.clearScreen()
-        if self.scr_num == 0:
-            left_db, _ = getVol()
-            alsa_vol = "{:.2f}dB".format(left_db)
-            if left_db == 0.0:
-                lcd.displayString("    ", 1, 80)
-            elif left_db > -10.0:
-                lcd.displayString("    ", 1, 90)
-            elif left_db > -100.0:
-                lcd.displayString("  ", 1, 100)
-            lcd.displayString(alsa_vol, 1, 20)
-            mute = getMuteStatus(MA_CTRL)
-            if mute == 0:
-                lcd.displayString("@", 3, 50)
-            else:
-                lcd.displayString("  ", 3, 50)
-            getHwparam()
 
+        _, left_db, _ = self.alsa.getVol()
+        alsa_vol = "{:.2f}dB".format(left_db)
+        if left_db == 0.0:
+            lcd.displayString("    ", 1, 80)
+        elif left_db > -10.0:
+            lcd.displayString("    ", 1, 90)
+        elif left_db > -100.0:
+            lcd.displayString("  ", 1, 100)
+        lcd.displayString(alsa_vol, 1, 20)
+        mute = self.alsa.getMuteStatus(self.alsa.CONTROL.MA_CTRL)
+        if mute == 0:
+            lcd.displayString("@", 3, 50)
+        else:
+            lcd.displayString("  ", 3, 50)
+        hw_format, hw_rate_num = self.alsa.getHwparam()
 
-def shell_cmd(cmd, timeout=SUBPROCESS_TIMEOUT):
-    """Run a shell command and return the stdout."""
-    out = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True
-    )
-    stdout, stderr = out.communicate(timeout=timeout)
-    return stdout, stderr
+        # display hw info
+        if hw_format == "S24_LE":
+            bit_rate = "24"
+            bit_format = hw_rate_num
+            bit_format1 = str(bit_format)
+            lcd.displayString(bit_rate, 5, 15)
+            lcd.displayString("S", 5, 5)
+            if last_bit_format != bit_format1:
+                lcd.displayString("        ", 5, 50)
+                last_bit_format = bit_format1
+            lcd.displayString(bit_format1, 5, 50)
+            led_off_counter = 0
+        elif hw_format == "S32_LE":
+            bit_rate = "32"
+            bit_format = hw_rate_num
+            bit_format1 = str(bit_format)
+            lcd.displayString(bit_rate, 5, 15)
+            lcd.displayString("S", 5, 5)
+            if last_bit_format != bit_format1:
+                lcd.displayString("        ", 5, 50)
+                last_bit_format = bit_format1
+            lcd.displayString(bit_format1, 5, 50)
+            led_off_counter = 0
+        elif hw_format == "S16_LE":
+            bit_rate = "16"
+            bit_format = hw_rate_num
+            bit_format1 = str(bit_format)
+            lcd.displayString(bit_rate, 5, 15)
+            lcd.displayString("S", 5, 5)
+            if last_bit_format != bit_format1:
+                lcd.displayString("        ", 5, 50)
+                last_bit_format = bit_format1
+            lcd.displayString(bit_format1, 5, 50)
+            led_off_counter = 0
+        else:
+            bit_rate = "closed"
+            lcd.displayStringNumber("   ", 5, 15)
+            lcd.displayString(" ", 5, 5)
+            lcd.displayString("        ", 5, 50)
+            last_bit_format = 0
 
 
 def getCardNumber():
@@ -787,193 +795,6 @@ def getCardNumber():
         return None
     else:
         return card_number
-
-
-def getMuteStatus(mixerCtrl):
-    global card_num
-    cmd = ["amixer", "-c", str(card_num), "get", "'{}'".format(mixerCtrl)]
-    out, _ = shell_cmd(cmd)
-    if "off" in out:
-        return 0
-    else:
-        return 1
-
-
-def setMuteStatus(mixerCtrl):
-    global card_num
-    global update_M
-    if update_M == 0:
-        shell_cmd(["amixer", "-c", card_num, "set", mixerCtrl, "mute"])
-    else:
-        shell_cmd(["amixer", "-c", card_num, "set", mixerCtrl, "unmute"])
-
-
-def getFilterStatus():
-    global card_num
-
-    out, _ = shell_cmd(["amixer", "-c", card_num, "get", "'PCM Filter Speed'"])
-    lines = [line for line in out.split("\n") if "Item0" in line]
-    if not lines:
-        return 1
-    word_str = lines[0].split()
-    current_status = word_str[1]
-    if current_status == "'Slow'":
-        return 0
-    else:
-        return 1
-
-
-def setFilterStatus():
-    global card_num
-    global filter_mod
-    if filter_mod == 0:
-        val = "Slow"
-    else:
-        val = "Fast"
-
-    cmd = ["amixer", "-c", card_num, "set", "'PCM Filter Speed'", val]
-    shell_cmd(cmd)
-
-
-def getVol():
-    global alsa_cvol
-    global card_num
-    CARD_NUMBER = card_num
-    MIXER_CONTROL = "Master"
-    left_db_str = "[-127.50dB]"
-    left_hrdware_val = 0
-    right_db_str = "[-127.50dB]"
-    stdout, stderr = shell_cmd(["amixer", "-c", CARD_NUMBER, "get", MIXER_CONTROL])
-    if not stderr:
-        line_str = stdout.split("\n")
-        for line in line_str:
-            if "Front Left:" in line:
-                word_str = line.split()
-                left_hrdware_val = word_str[3]
-                left_db_str = word_str[5]
-                left_db_str = left_db_str.replace("[", "")
-                left_db_str = left_db_str.replace("]", "")
-            if "Front Right:" in line:
-                word_str = line.split()
-                right_db_str = word_str[5]
-                right_db_str = right_db_str.replace("[", "")
-                right_db_str = right_db_str.replace("]", "")
-    else:
-        print("Error getting volume: {}".format(stderr))
-
-    left_db_float = float(left_db_str.split("dB")[0])
-    right_db_float = float(right_db_str.split("dB")[0])
-
-    alsa_cvol = int(left_hrdware_val)
-
-    return (left_db_float, right_db_float)
-
-
-def setVol():
-    global alsa_hvol
-    global alsa_cvol
-    global card_num
-    CARD_NUMBER = card_num
-    MIXER_CONTROL = "Master"
-    MIXER_CONTROL1 = "Digital"
-
-    getVol()
-    setflag = 0
-    if alsa_cvol == alsa_hvol:
-        setflag = 1
-    elif alsa_hvol < 0 or alsa_hvol > 255:
-        setflag = 1
-    else:
-        cmd = (
-            "amixer",
-            "-c",
-            CARD_NUMBER,
-            "set",
-            MIXER_CONTROL,
-            "{left},{right}".format(left=alsa_hvol, right=alsa_hvol),
-        )
-        cmd1 = (
-            "amixer",
-            "-c",
-            CARD_NUMBER,
-            "set",
-            MIXER_CONTROL1,
-            "{left},{right}".format(left=alsa_hvol, right=alsa_hvol),
-        )
-        shell_cmd(cmd)
-        shell_cmd(cmd1)
-
-    return setflag
-
-
-def getHwparam():
-    global card_num
-    global bit_rate
-    global bit_format
-    global last_bit_format
-    global led_off_counter
-    CARD_NUMBER = card_num
-    hw_format = ""
-    hw_rate_num = ""
-    if CARD_NUMBER == -1:
-        hw_param_out = "No " + A_CARD1
-    else:
-        hw_cmd = "/proc/asound/card" + str(CARD_NUMBER) + "/pcm0p/sub0/hw_params"
-        stdout, _ = shell_cmd(["cat", hw_cmd])
-        hw_param_str = stdout.rstrip().splitlines()
-        if hw_param_str[0] == "closed":
-            hw_param_out = "closed"
-        else:
-            for line in hw_param_str:
-                if line.startswith("format:"):
-                    format_val = line.split(":")
-                    hw_format = format_val[1].strip()
-                if str(line).find("rate:") != -1:
-                    rate_val = line.split(":")
-                    hw_rate = rate_val[1].strip()
-                    hw_rate_line = hw_rate.split()
-                    hw_rate_num = int(hw_rate_line[0])
-            hw_param_out = [hw_format, hw_rate_num]
-    if hw_format == "S24_LE":
-        bit_rate = "24"
-        bit_format = hw_rate_num
-        bit_format1 = str(bit_format)
-        lcd.displayString(bit_rate, 5, 15)
-        lcd.displayString("S", 5, 5)
-        if last_bit_format != bit_format1:
-            lcd.displayString("        ", 5, 50)
-            last_bit_format = bit_format1
-        lcd.displayString(bit_format1, 5, 50)
-        led_off_counter = 0
-    elif hw_format == "S32_LE":
-        bit_rate = "32"
-        bit_format = hw_rate_num
-        bit_format1 = str(bit_format)
-        lcd.displayString(bit_rate, 5, 15)
-        lcd.displayString("S", 5, 5)
-        if last_bit_format != bit_format1:
-            lcd.displayString("        ", 5, 50)
-            last_bit_format = bit_format1
-        lcd.displayString(bit_format1, 5, 50)
-        led_off_counter = 0
-    elif hw_format == "S16_LE":
-        bit_rate = "16"
-        bit_format = hw_rate_num
-        bit_format1 = str(bit_format)
-        lcd.displayString(bit_rate, 5, 15)
-        lcd.displayString("S", 5, 5)
-        if last_bit_format != bit_format1:
-            lcd.displayString("        ", 5, 50)
-            last_bit_format = bit_format1
-        lcd.displayString(bit_format1, 5, 50)
-        led_off_counter = 0
-    else:
-        bit_rate = "closed"
-        lcd.displayStringNumber("   ", 5, 15)
-        lcd.displayString(" ", 5, 5)
-        lcd.displayString("        ", 5, 50)
-        last_bit_format = 0
-    return hw_param_out
 
 
 def get_ip_address(ifname):
@@ -1012,28 +833,23 @@ def init_gpio_bcm():
 
 def main():
     global h_name
-    global card_num
     global led_off_counter
     global lcd
+
+    if os.name != "posix":
+        sys.exit("platform not supported")
     led_off_counter = 1
     i2cConfig()
     lcd = SH1106LCD()
-    h_ip = get_ip_address("eth0")
-    w_ip = get_ip_address("wlan0")
-    h_name = "HOST:%s" % socket.gethostname()
-    lcd.displayStringNumber(h_ip, 0, 0)
-    lcd.displayStringNumber(w_ip, 6, 0)
-    lcd.displayString(h_name, 2, 0)
-    lcd.displayString(A_CARD1, 4, 0)
-    time.sleep(SPLASH_SCREEN_TIMEOUT)
 
-    lcd.clearScreen()
     card_num = getCardNumber()
+    alsa_boss2 = AlsaMixerBoss2(card_num, A_CARD1)
+    gui = GUI(lcd, alsa_boss2)
+    gui.display_splash()
+
     if card_num is None:
         print("no card detected")
-        lcd.displayString("NO BOSS2", 4, 5)
-        lcd.displayStringNumber(h_ip, 0, 0)
-        lcd.displayStringNumber(w_ip, 6, 0)
+        gui.display_err("NO BOSS2")
         exit(0)
 
     time.sleep(0.04)
@@ -1041,10 +857,9 @@ def main():
     ir = IRModule.IRRemote(callback="DECODE")
     GPIO.add_event_detect(IR_PIN, GPIO.BOTH, callback=ir.pWidth)
     ir.set_callback(remote_callback)
-    gui = GUI(lcd)
     try:
         gui.screenVol()
-        update_status()
+        hp_fil, hv_en, non_os, ph_comp, de_emp, fil_sp = alsa_boss2.update_status()
         while True:
             gui.do_update()
     except KeyboardInterrupt:
