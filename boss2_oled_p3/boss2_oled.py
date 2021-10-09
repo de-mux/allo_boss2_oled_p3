@@ -255,6 +255,8 @@ class GUI:
             self._scr0_ref_count = 0
 
         switches = self._check_switches()
+        if any(switches.values()):
+            led_off_counter = 0
 
         if switches[Switch.LEFT] == 1 or ir1 == 1:
             time.sleep(0.1)
