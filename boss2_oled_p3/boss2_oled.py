@@ -17,6 +17,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 from enum import auto, Enum, IntEnum
+import logging
 import os
 import socket
 import struct
@@ -33,6 +34,7 @@ from alsa import AlsaMixerBoss2
 from utils import shell_cmd
 
 SPLASH_SCREEN_TIMEOUT = 5
+DISPLAY_OFF_TIMEOUT = 30
 
 IR_PIN = 16
 SW1 = 14
@@ -47,8 +49,6 @@ A_CARD = "Boss2"
 A_CARD1 = "BOSS2"
 m_indx = 1
 f_indx = 1
-# alsa_hvol = 230
-# alsa_cvol = 230
 fil_sp = 0
 de_emp = 0
 non_os = 0
@@ -56,14 +56,10 @@ ph_comp = 0
 hv_en = 0
 hp_fil = 0
 ok_flag = 0
-# card_num = 0
 bit_rate = 0
 bit_format = 0
 last_bit_format = 0
-# mute = 1
 sec_flag = 0
-# status_M = 0
-# filter_cur = 0
 irp = 0
 irm = 0
 ir1 = 0
@@ -71,9 +67,21 @@ irok = 0
 ir3 = 0
 ir4 = 0
 ir5 = 0
-led_off_counter = 0
+display_next_timeout = None
+
+
+class DisplayFlag(IntEnum):
+    OFF = 0
+    ON = 1
+    TURN_OFF = 2
+    TURN_ON = 3
+
+
+display_flag = DisplayFlag.OFF
 
 lcd = None
+
+logger = logging.Logger("Boss2")
 
 
 def remote_callback(code):
@@ -84,28 +92,28 @@ def remote_callback(code):
     global ir3
     global ir4
     global ir5
-    global led_off_counter
+    logger.debug("Remote callback: 0x{}".format(hex(code)))
     if code == 0xC77807F:
         irp = 1
-        led_off_counter = 0
+        reset_display_timeout()
     elif code == 0xC7740BF:
         irm = 1
-        led_off_counter = 0
+        reset_display_timeout()
     elif code == 0xC77906F:
         ir1 = 1
-        led_off_counter = 0
+        reset_display_timeout()
     elif code == 0xC7730CF:
         irok = 1
-        led_off_counter = 0
+        reset_display_timeout()
     elif code == 0xC7720DF:
         ir3 = 1
-        led_off_counter = 0
+        reset_display_timeout()
     elif code == 0xC77A05F:
         ir4 = 1
-        led_off_counter = 0
+        reset_display_timeout()
     elif code == 0xC7710EF:
         ir5 = 1
-        led_off_counter = 0
+        reset_display_timeout()
     return
 
 
@@ -160,7 +168,7 @@ class GUI:
         self._ip_wan = ""
         self._hostname = ""
         self._scr0_ref_count = 0
-        self._LED_FLAG = 0
+        # self._LED_FLAG = 0
 
     def display_splash(self):
         lcd.display_off()
@@ -210,6 +218,22 @@ class GUI:
             alsa_hvol -= 30
         self.alsa.setVol(alsa_hvol)
 
+    def _check_display_timeout(self):
+        global display_next_timeout
+        global display_flag
+
+        if time.time() >= display_next_timeout and display_flag != DisplayFlag.OFF:
+            display_flag = DisplayFlag.TURN_OFF
+
+        if display_flag == DisplayFlag.TURN_OFF:
+            logger.debug("Display OFF")
+            self.lcd.display_off()
+            display_flag = DisplayFlag.OFF
+        elif display_flag == DisplayFlag.TURN_ON:
+            logger.debug("Display ON")
+            self.lcd.display_on()
+            display_flag = DisplayFlag.ON
+
     def do_update(self):
         global m_indx
         global h_name
@@ -231,21 +255,8 @@ class GUI:
         global ir3
         global ir4
         global ir5
-        global led_off_counter
 
-        if led_off_counter == 950:
-            self._LED_FLAG = 1
-        elif led_off_counter == 1:
-            self._LED_FLAG = 0
-        elif led_off_counter > 950:
-            led_off_counter = 951
-
-        if self._LED_FLAG == 1:
-            self.lcd.display_off()
-            self._LED_FLAG = 2
-        elif self._LED_FLAG == 0:
-            self.lcd.display_on()
-            self._LED_FLAG = 2
+        self._check_display_timeout()
 
         if self._scr0_ref_count < 10:
             self._scr0_ref_count += 1
@@ -256,7 +267,7 @@ class GUI:
 
         switches = self._check_switches()
         if any(switches.values()):
-            led_off_counter = 0
+            reset_display_timeout()
 
         if switches[Switch.LEFT] == 1 or ir1 == 1:
             time.sleep(0.1)
@@ -478,7 +489,6 @@ class GUI:
             if self.screen == Screen.INFO:
                 self.screenVol()
                 sec_flag = 0
-        led_off_counter += 1
 
     def infoScr(self):
         if self.screen != Screen.INFO:
@@ -714,10 +724,8 @@ class GUI:
             lcd.displayString("OK", 6, 50)
 
     def screenVol(self):
-        # global mute
         global bit_rate
         global bit_format
-        global led_off_counter
         global last_bit_format
         if self.screen != Screen.INFO:
             self.screen = Screen.INFO
@@ -750,7 +758,7 @@ class GUI:
                 lcd.displayString("        ", 5, 50)
                 last_bit_format = bit_format1
             lcd.displayString(bit_format1, 5, 50)
-            led_off_counter = 0
+            reset_display_timeout()
         elif hw_format == "S32_LE":
             bit_rate = "32"
             bit_format = hw_rate_num
@@ -761,7 +769,7 @@ class GUI:
                 lcd.displayString("        ", 5, 50)
                 last_bit_format = bit_format1
             lcd.displayString(bit_format1, 5, 50)
-            led_off_counter = 0
+            reset_display_timeout()
         elif hw_format == "S16_LE":
             bit_rate = "16"
             bit_format = hw_rate_num
@@ -772,7 +780,7 @@ class GUI:
                 lcd.displayString("        ", 5, 50)
                 last_bit_format = bit_format1
             lcd.displayString(bit_format1, 5, 50)
-            led_off_counter = 0
+            reset_display_timeout()
         else:
             bit_rate = "closed"
             lcd.displayStringNumber("   ", 5, 15)
@@ -814,6 +822,7 @@ def get_ip_address(ifname):
         ip_address = out.split("inet ")[1].split("/")[0]
     except Exception as err:
         print("Unable to obtain IP address for {} -- {}".format(ifname, err))
+        ip_address = "{}: NA".format(ifname)
     return ip_address
 
 
@@ -833,14 +842,32 @@ def init_gpio_bcm():
     init_gpio(mode=GPIO.BCM)
 
 
+def gpio_cleanup():
+    GPIO.cleanup(IR_PIN)
+    GPIO.cleanup(SW1)
+    GPIO.cleanup(SW2)
+    GPIO.cleanup(SW3)
+    GPIO.cleanup(SW4)
+    GPIO.cleanup(SW5)
+
+
+def reset_display_timeout():
+    global display_flag
+    global display_next_timeout
+
+    display_next_timeout = time.time() + DISPLAY_OFF_TIMEOUT
+    if display_flag != DisplayFlag.ON:
+        display_flag = DisplayFlag.TURN_ON
+    logger.debug("Display timeout reset +{}s".format(DISPLAY_OFF_TIMEOUT))
+
+
 def main():
     global h_name
-    global led_off_counter
     global lcd
 
     if os.name != "posix":
         sys.exit("platform not supported")
-    led_off_counter = 1
+    reset_display_timeout()
     i2cConfig()
     lcd = SH1106LCD()
 
@@ -855,10 +882,14 @@ def main():
         exit(0)
 
     time.sleep(0.04)
-    init_gpio_bcm()
     ir = IRModule.IRRemote(callback="DECODE")
+
+    init_gpio_bcm()
+
     GPIO.add_event_detect(IR_PIN, GPIO.BOTH, callback=ir.pWidth)
+    logger.debug("Setting up IR callback")
     ir.set_callback(remote_callback)
+    ir.set_repeat(True)
     try:
         gui.screenVol()
         hp_fil, hv_en, non_os, ph_comp, de_emp, fil_sp = alsa_boss2.update_status()
@@ -875,12 +906,7 @@ def main():
             except Exception as err:
                 print("Unable to clear LCD: {}".format(err))
         ir.remove_callback()
-        GPIO.cleanup(IR_PIN)
-        GPIO.cleanup(SW1)
-        GPIO.cleanup(SW2)
-        GPIO.cleanup(SW3)
-        GPIO.cleanup(SW4)
-        GPIO.cleanup(SW5)
+        gpio_cleanup()
 
 
 if __name__ == "__main__":
