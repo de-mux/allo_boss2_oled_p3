@@ -4,8 +4,8 @@
 created Apr 27, 2018
 modified - Apr 30, 2018
 modified Apr 1, 2020 - added repeat code functionality
-modified Jan 2021 for working on Allo Boss2 oled screen with IR"""
-"""
+modified Jan 2021 for working on Allo Boss2 oled screen with IR
+
 Copyright 2018, 2019, 2020 Owain Martin
 
 This program is free software: you can redistribute it and/or modify
@@ -25,8 +25,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import RPi.GPIO as GPIO
 import threading
 import time
-
-# import netifaces
 
 
 class IRRemote:
@@ -53,7 +51,7 @@ class IRRemote:
         self.pList.append(time.time() - self.timer)
         self.timer = time.time()
 
-        if not self:
+        if not self.decoding:
             self.decoding = True
             check_loop = threading.Thread(
                 name="self.pulse_checker", target=self.pulse_checker
@@ -128,6 +126,8 @@ class IRRemote:
             except Exception:
                 pass
 
+        # if no acceptable start is found return -1
+
         if sIndex == -1:
             return -1
 
@@ -159,6 +159,8 @@ class IRRemote:
         if self.verbose:
             print(bitList)
 
+        # convert the list of 1s and 0s into a
+        # binary number
         pulse = 0
         bitShift = 0
         for b in bitList:
@@ -172,20 +174,15 @@ class IRRemote:
 
         self.callback = callback
 
-        return
-
     def remove_callback(self):
         """remove_callback, function to allow the user to remove
         the callback function used at any time"""
 
         self.callback = None
 
-        return
-
     def print_ir_code(self, code):
         """print_ir_code, function to display IR code received"""
-
-        return
+        print(hex(code))
 
     def set_verbose(self, verbose=True):
         """set_verbose, function to turn verbose mode
@@ -194,70 +191,57 @@ class IRRemote:
 
         self.verbose = verbose
 
-        return
-
     def set_repeat(self, repeat=True):
         """set_repeat, function to enable and disable
         the IR repeat code functionality"""
 
         self.repeatCodeOn = repeat
 
-        return
-
 
 if __name__ == "__main__":
 
     def remote_callback(code):
-
+        print(hex(code))
         # Codes listed below are for the
         # Allo 7 button remote
         if code == 0xC77807F:
-            print("Power")
-            print("")
+            print("Power\n")
         elif code == 0xC7740BF:
-            print("Mute")
-            print("")
+            print("Mute\n")
         elif code == 0xC77906F:
-            print("Left Arrow")
-            print("")
+            print("Left Arrow\n")
         elif code == 0xC7730CF:
-            print("Select")
-            print("")
+            print("Select\n")
         elif code == 0xC7720DF:
-            print("Up Arrow")
-            print("")
+            print("Up Arrow\n")
         elif code == 0xC77A05F:
-            print("Down Arrow")
-            print("")
+            print("Down Arrow\n")
         elif code == 0xC7710EF:
-            print("Right Arrow")
-            print("")
+            print("Right Arrow\n")
         else:
             print(".")  # unknown code
-            print(hex(code))  # unknown code
-        print(".")  # unknown code
-        return
 
     ir = IRRemote("DECODE")
 
+    IR_PIN = 16
+
     GPIO.setwarnings(False)
-    # GPIO.setmode(GPIO.BOARD)  # uses numbering outside circles
     GPIO.setmode(GPIO.BCM)  # uses numbering outside circles
-    # GPIO.setup(36,GPIO.IN,GPIO.PUD_UP)   # set pin 16 to input
-    GPIO.setup(16, GPIO.IN)  # set pin 16 to input
-    # GPIO.add_event_detect(36,GPIO.BOTH,callback=ir.pWidth)
-    GPIO.add_event_detect(16, GPIO.BOTH, callback=ir.pWidth)
+    GPIO.setup(IR_PIN, GPIO.IN)  # set pin IR_PIN to input
+    GPIO.add_event_detect(IR_PIN, GPIO.BOTH, callback=ir.pWidth)
 
     ir.set_verbose()
 
     time.sleep(5)
+    print("Setting up callback")
     ir.set_verbose(False)
     ir.set_callback(remote_callback)
     ir.set_repeat(True)
 
+    print("Waiting for IR remote input. Press Ctrl-C to quit.")
     try:
         while True:
             time.sleep(1)
     except (Exception, KeyboardInterrupt):
         ir.remove_callback()
-        GPIO.cleanup(36)
+        GPIO.cleanup(IR_PIN)
