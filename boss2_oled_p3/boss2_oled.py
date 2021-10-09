@@ -35,6 +35,8 @@ from utils import shell_cmd
 
 SPLASH_SCREEN_TIMEOUT = 5
 DISPLAY_OFF_TIMEOUT = 30
+LOG_FORMAT = "%(asctime)-15s [%(levelname)s] (%(name)s) %(message)s"
+LOG_LEVEL = logging.INFO
 
 IR_PIN = 16
 SW1 = 14
@@ -81,7 +83,7 @@ display_flag = DisplayFlag.OFF
 
 lcd = None
 
-logger = logging.Logger("Boss2")
+logger = logging.getLogger("Boss2")
 
 
 def remote_callback(code):
@@ -306,7 +308,7 @@ class GUI:
                     ph_comp = 1
                     self.phScr9()
             else:
-                print(self.screen)
+                logger.error("Invalid screen: {}".format(self.screen))
 
         if irm == 1:
             time.sleep(0.1)
@@ -801,7 +803,7 @@ def getCardNumber():
             card_number = card[0]
             break
     if setflag == 0:
-        print("No Boss2")
+        logger.error("No Boss2")
         return None
     else:
         return card_number
@@ -821,7 +823,7 @@ def get_ip_address(ifname):
         out, _ = shell_cmd(["ip", "addr", "show", ifname])
         ip_address = out.split("inet ")[1].split("/")[0]
     except Exception as err:
-        print("Unable to obtain IP address for {} -- {}".format(ifname, err))
+        logger.warning("Unable to obtain IP address for {} -- {}".format(ifname, err))
         ip_address = "{}: NA".format(ifname)
     return ip_address
 
@@ -861,10 +863,19 @@ def reset_display_timeout():
     logger.debug("Display timeout reset +{}s".format(DISPLAY_OFF_TIMEOUT))
 
 
+def shutdown_lcd(lcd):
+    try:
+        lcd.display_off()
+        lcd.clearScreen()
+    except Exception as err:
+        logger.warning("Unable to clear LCD: {}".format(err))
+
+
 def main():
     global h_name
     global lcd
 
+    logging.basicConfig(format=LOG_FORMAT, level=LOG_LEVEL)
     if os.name != "posix":
         sys.exit("platform not supported")
     reset_display_timeout()
@@ -877,7 +888,7 @@ def main():
     gui.display_splash()
 
     if card_num is None:
-        print("no card detected")
+        logger.error("No card detected")
         gui.display_err("NO BOSS2")
         exit(0)
 
@@ -890,21 +901,18 @@ def main():
     logger.debug("Setting up IR callback")
     ir.set_callback(remote_callback)
     ir.set_repeat(True)
+
     try:
         gui.screenVol()
         hp_fil, hv_en, non_os, ph_comp, de_emp, fil_sp = alsa_boss2.update_status()
         while True:
             gui.do_update()
     except KeyboardInterrupt:
-        print("Interrupted by user.")
+        logger.info("Interrupted by user.")
     finally:
-        print("Cleaning up...")
+        logger.info("Cleaning up...")
         if lcd:
-            try:
-                lcd.display_off()
-                lcd.clearScreen()
-            except Exception as err:
-                print("Unable to clear LCD: {}".format(err))
+            shutdown_lcd(lcd)
         ir.remove_callback()
         gpio_cleanup()
 
