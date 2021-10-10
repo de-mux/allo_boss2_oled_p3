@@ -1,3 +1,4 @@
+"""Lower half of 9x16 font."""
 # TODO: Fix some of the numeric characters. 3, 5 and 6 are messed up for sure.
 Number2 = [
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],  # Code for char space

@@ -3,13 +3,12 @@ Reference:
 - https://github.com/adamyoung600/WRX_HUD/blob/master/Hardware/SH1106/SH1106LCD.py
 - https://github.com/olikraus/u8g2/blob/master/csrc/u8x8_d_sh1106_64x32.c
 """
-import smbus
+from smbus2 import SMBus
 import time
 from PIL import Image
 import traceback
-from .SH1106FontLib import capFont
+from .SH1106FontLib import CAP_FONT_TOP, CAP_FONT_BOTTOM
 from .Line1SH1106FontLib import Line1
-from .SH1106FontLib1 import capFont1
 from .SH1106FontLibNumbers import Number1
 from .SH1106FontLibNumbers1 import Number2
 
@@ -93,7 +92,14 @@ class SH1106LCD:
 
     def __init__(self):
         # Default i2c bus
-        self.bus = smbus.SMBus(1)
+        try:
+            self.bus = SMBus(1)
+        except FileNotFoundError:
+            raise RuntimeError(
+                "i2c interface not found. Ensure it is enabled with:"
+                + " modprobe i2c-dev"
+            )
+
         self.OLED_Address = 0x3C
         self.OLED_Command_Mode = 0x80
         self.OLED_Data_Mode = 0x40
@@ -106,11 +112,11 @@ class SH1106LCD:
         self.imageBuffer = {}
 
         # Import font
-        self.font = capFont
-        self.font1 = capFont1
+        self.font = CAP_FONT_TOP
+        self.font1 = CAP_FONT_BOTTOM
         self.fontLine1 = Line1
-        self.fontNumber = Number1
-        self.fontNumber1 = Number2
+        self.fontNumber = CAP_FONT_TOP
+        self.fontNumber1 = CAP_FONT_BOTTOM
 
     def __initialize(self):
         """Initilizes the LCD.  Values are taken from the SH1106 datasheet."""
