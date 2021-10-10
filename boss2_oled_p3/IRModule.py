@@ -58,8 +58,6 @@ class IRRemote:
             )
             check_loop.start()
 
-        return
-
     def pulse_checker(self):
         """pulse_checker, function to look for the end of the IR remote
         signal and activate the signal decode function followed by
@@ -68,7 +66,7 @@ class IRRemote:
         End of signal is determined by 1 of 2 ways
         1 - if the length of the pulse list is larger than self.maxPulseListLength
           - used for initial button press codes
-        2 - if the length of time receiving the pulse is great than self.checkTime
+        2 - if the length of time receiving the pulse is greater than self.checkTime
           - used for repeat codes"""
 
         timer = time.time()
@@ -85,9 +83,9 @@ class IRRemote:
             decode = self.decode_pulse(self.pList)
             self.lastIRCode = decode
 
-        # if the length of self.pList is less than 10
-        # assume repeat code found
         elif (len(self.pList) > 3) and (len(self.pList) < 10):
+            # if the length of self.pList is less than 10
+            # assume repeat code found
             if self.repeatCodeOn:
                 decode = self.lastIRCode
             else:
@@ -102,8 +100,6 @@ class IRRemote:
 
         if self.callback is not None:
             self.callback(decode)
-
-        return
 
     def decode_pulse(self, pList):
         """decode_pulse,  function to decode the high and low
