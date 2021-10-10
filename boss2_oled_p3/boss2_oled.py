@@ -63,12 +63,7 @@ bit_format = 0
 last_bit_format = 0
 sec_flag = 0
 irp = 0
-irm = 0
-ir1 = 0
-irok = 0
-ir3 = 0
-ir4 = 0
-ir5 = 0
+remote_interface = None
 display_next_timeout = None
 
 
@@ -87,36 +82,11 @@ logger = logging.getLogger("Boss2")
 
 
 def remote_callback(code):
-    global irp
-    global irm
-    global ir1
-    global irok
-    global ir3
-    global ir4
-    global ir5
-    logger.debug("Remote callback: 0x{}".format(hex(code)))
-    if code == 0xC77807F:
-        irp = 1
+    global remote_interface
+    logger.info("Remote callback: {}".format(hex(code)))
+    valid = remote_interface.update(code)
+    if valid:
         reset_display_timeout()
-    elif code == 0xC7740BF:
-        irm = 1
-        reset_display_timeout()
-    elif code == 0xC77906F:
-        ir1 = 1
-        reset_display_timeout()
-    elif code == 0xC7730CF:
-        irok = 1
-        reset_display_timeout()
-    elif code == 0xC7720DF:
-        ir3 = 1
-        reset_display_timeout()
-    elif code == 0xC77A05F:
-        ir4 = 1
-        reset_display_timeout()
-    elif code == 0xC7710EF:
-        ir5 = 1
-        reset_display_timeout()
-    return
 
 
 class FrontPanelInterface:
@@ -130,12 +100,65 @@ class FrontPanelInterface:
         }
 
     def get_switch_state(self):
-        state = {switch_id: 0 for switch_id in self._switches}
+        state = {switch_id: False for switch_id in self._switches}
 
         for switch_id, pin in self._switches.items():
             if GPIO.input(pin) != GPIO.HIGH:
-                state[switch_id] = 1
+                state[switch_id] = True
         return state
+
+
+class RemoteButton(Enum):
+    POWER = auto()
+    MUTE = auto()
+    OK = auto()
+    UP = auto()
+    DOWN = auto()
+    LEFT = auto()
+    RIGHT = auto()
+
+
+class RemoteInterface:
+    _CODE_TABLE = {
+        0xC77807F: RemoteButton.POWER,
+        0xC7740BF: RemoteButton.MUTE,
+        0xC7730CF: RemoteButton.OK,
+        0xC77906F: RemoteButton.LEFT,
+        0xC7720DF: RemoteButton.UP,
+        0xC77A05F: RemoteButton.DOWN,
+        0xC7710EF: RemoteButton.RIGHT,
+    }
+
+    def __init__(self):
+        self._buttons = {}
+        self._clear_buttons()
+
+    def update(self, code):
+        """Update interface with the given code.
+        Returns True if the code corresponds to a valid button, False otherwise.
+        """
+        if code not in self._CODE_TABLE:
+            logger.warning("Unhandled code %x from remote control", code)
+            return False
+        button = self._CODE_TABLE[code]
+        self._buttons[button] = True
+        return True
+
+    def get_button_state(self, button):
+        """Gets the state of the button, automatically clearing the value for
+        the next read.
+        """
+        state = self._buttons[button]
+        self._clear(button)
+        return state
+
+    def _clear(self, button):
+        """Clear the state of a button."""
+        self._buttons[button] = False
+
+    def _clear_buttons(self):
+        for button in self._CODE_TABLE.values():
+            self._clear(button)
 
 
 class Screen(IntEnum):
@@ -236,6 +259,240 @@ class GUI:
             self.lcd.display_on()
             display_flag = DisplayFlag.ON
 
+    def handle_left(self):
+        global hv_en
+        global fil_sp
+        global hp_fil
+        global de_emp
+        global non_os
+        global ph_comp
+
+        # time.sleep(0.1)
+        if self.screen == Screen.INFO:
+            self.lcd.clearScreen()
+            self.menuScr()
+        elif self.screen == Screen.MENU:
+            self.screenVol()
+        elif self.screen in [Screen.BOOT, Screen.FILTER]:
+            self.menuScr()
+        elif self.screen == Screen.HV:
+            if hv_en == 0:
+                hv_en = 1
+                self.hvScr4()
+        elif self.screen == Screen.SP:
+            if fil_sp == 0:
+                fil_sp = 1
+                self.spScr5()
+        elif self.screen == Screen.HP:
+            if hp_fil == 0:
+                hp_fil = 1
+                self.hpScr6()
+        elif self.screen == Screen.DE_EMPHASIS:
+            if de_emp == 0:
+                de_emp = 1
+                self.deScr7()
+        elif self.screen == Screen.NON_OSAMP:
+            if non_os == 0:
+                non_os = 1
+                self.nonScr8()
+        elif self.screen == Screen.PHASE_COMPENSATION:
+            if ph_comp == 0:
+                ph_comp = 1
+                self.phScr9()
+        else:
+            logger.error("Invalid screen: {}".format(self.screen))
+
+    def handle_mute(self):
+        global sec_flag
+
+        # time.sleep(0.1)
+        sec_flag = 1
+        # irm = 0
+        mute = self.alsa.getMuteStatus(self.alsa.CONTROL.MA_CTRL)
+        if mute == 0:
+            self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 1)
+            self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 1)
+        else:
+            self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 0)
+            self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 0)
+
+    def handle_ok(self):
+        global sec_flag
+        global mute
+        global ok_flag
+
+        # time.sleep(0.1)
+        irm_nflag = 0
+        if self.screen == Screen.INFO and irm_nflag == 0:
+            sec_flag = 1
+            mute = self.alsa.getMuteStatus(self.alsa.CONTROL.MA_CTRL)
+            if mute == 0:
+                self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 1)
+                self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 1)
+            else:
+                self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 0)
+                self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 0)
+        elif self.screen == Screen.MENU:
+            if m_indx == 1:
+                self.bootScr()
+            elif m_indx == 2:
+                self.hvScr4()
+            elif m_indx == 3:
+                self.filtScr()
+            elif m_indx == 4:
+                self.spScr5()
+        elif self.screen == Screen.BOOT:
+            self.menuScr()
+        elif self.screen == Screen.FILTER:
+            if f_indx == 1:
+                self.phScr9()
+            elif f_indx == 2:
+                self.hpScr6()
+            elif f_indx == 3:
+                self.deScr7()
+            elif f_indx == 4:
+                self.nonScr8()
+        elif self.screen == Screen.HV:
+            ok_flag = 0
+            mute = self.alsa.getMuteStatus(self.alsa.CONTROL.HV_CTRL)
+            if mute != hv_en:
+                self.alsa.setMuteStatus(self.alsa.CONTROL.HV_CTRL, hv_en)
+            self.menuScr()
+        elif self.screen == Screen.SP:
+            ok_flag = 0
+            filter_cur = self.alsa.getFilterStatus()
+            if filter_cur != fil_sp:
+                self.alsa.setFilterStatus(fil_sp)
+            self.menuScr()
+        elif self.screen == Screen.HP:
+            ok_flag = 0
+            mute = self.alsa.getMuteStatus(self.alsa.CONTROL.HP_CTRL)
+            if mute != hp_fil:
+                self.alsa.setMuteStatus(self.alsa.CONTROL.HP_CTRL, hp_fil)
+            self.filtScr()
+        elif self.screen == Screen.DE_EMPHASIS:
+            ok_flag = 0
+            mute = self.alsa.getMuteStatus(self.alsa.CONTROL.DE_CTRL)
+            if mute != de_emp:
+                self.alsa.setMuteStatus(self.alsa.CONTROL.DE_CTRL, de_emp)
+            self.filtScr()
+        elif self.screen == Screen.NON_OSAMP:
+            ok_flag = 0
+            mute = self.alsa.getMuteStatus(self.alsa.CONTROL.NON_CTRL)
+            if mute != non_os:
+                self.alsa.setMuteStatus(self.alsa.CONTROL.NON_CTRL, non_os)
+            self.filtScr()
+        elif self.screen == Screen.PHASE_COMPENSATION:
+            ok_flag = 0
+            mute = self.alsa.getMuteStatus(self.alsa.CONTROL.PH_CTRL)
+            if mute != ph_comp:
+                self.alsa.setMuteStatus(self.alsa.CONTROL.PH_CTRL, ph_comp)
+            self.filtScr()
+
+    def handle_up(self):
+        global f_indx
+        global m_indx
+
+        # time.sleep(0.1)
+        if self.screen == Screen.INFO:
+            self._volume_up()
+            self.screenVol()
+        elif self.screen == Screen.MENU:
+            if m_indx > 1:
+                m_indx -= 1
+            self.menuScr()
+        elif self.screen == Screen.FILTER:
+            if f_indx > 1:
+                f_indx -= 1
+            self.filtScr()
+
+    def handle_down(self):
+        global f_indx
+        global m_indx
+        global ok_flag
+
+        # time.sleep(0.1)
+        if self.screen == Screen.INFO:
+            self._volume_down()
+            self.screenVol()
+        elif self.screen == Screen.MENU:
+            m_indx += 1
+            if m_indx > 4:
+                m_indx = 1
+            self.menuScr()
+        elif self.screen == Screen.FILTER:
+            f_indx += 1
+            if f_indx > 4:
+                f_indx = 1
+            self.filtScr()
+        elif self.screen == Screen.HV:
+            if ok_flag == 0:
+                ok_flag = 1
+            self.hvScr4()
+        elif self.screen == Screen.SP:
+            if ok_flag == 0:
+                ok_flag = 1
+            self.spScr5()
+        elif self.screen == Screen.HP:
+            if ok_flag == 0:
+                ok_flag = 1
+            self.self.hpScr6()
+        elif self.screen == Screen.DE_EMPHASIS:
+            if ok_flag == 0:
+                ok_flag = 1
+            self.self.deScr7()
+        elif self.screen == Screen.NON_OSAMP:
+            if ok_flag == 0:
+                ok_flag = 1
+            self.self.nonScr8()
+        elif self.screen == Screen.PHASE_COMPENSATION:
+            if ok_flag == 0:
+                ok_flag = 1
+            self.self.phScr9()
+
+    def handle_right(self):
+        global hv_en
+        global fil_sp
+        global hp_fil
+        global de_emp
+        global non_os
+        global ph_comp
+
+        # time.sleep(0.1)
+        if self.screen == Screen.INFO:
+            self.lcd.clearScreen()
+            self.menuScr()
+        elif self.screen == Screen.MENU:
+            self.screenVol()
+        elif self.screen == Screen.BOOT:
+            self.menuScr()
+        elif self.screen == Screen.FILTER:
+            self.menuScr()
+        elif self.screen == Screen.HV:
+            if hv_en == 1:
+                hv_en = 0
+            self.hvScr4()
+        elif self.screen == Screen.SP:
+            if fil_sp == 1:
+                fil_sp = 0
+            self.spScr5()
+        elif self.screen == Screen.HP:
+            if hp_fil == 1:
+                hp_fil = 0
+            self.hpScr6()
+        elif self.screen == Screen.DE_EMPHASIS:
+            if de_emp == 1:
+                de_emp = 0
+            self.deScr7()
+        elif self.screen == Screen.NON_OSAMP:
+            if non_os == 1:
+                non_os = 0
+            self.nonScr8()
+        elif self.screen == Screen.PHASE_COMPENSATION:
+            if ph_comp == 1:
+                ph_comp = 0
+            self.phScr9()
+
     def do_update(self):
         global m_indx
         global h_name
@@ -251,12 +508,6 @@ class GUI:
         global filter_mod
         global mute
         global sec_flag
-        global irm
-        global irok
-        global ir1
-        global ir3
-        global ir4
-        global ir5
 
         self._check_display_timeout()
 
@@ -271,221 +522,30 @@ class GUI:
         if any(switches.values()):
             reset_display_timeout()
 
-        if switches[Switch.LEFT] == 1 or ir1 == 1:
-            time.sleep(0.1)
-            ir1 = 0
-            if self.screen == Screen.INFO:
-                self.lcd.clearScreen()
-                self.menuScr()
-            elif self.screen == Screen.MENU:
-                self.screenVol()
-            elif self.screen == Screen.BOOT:
-                self.menuScr()
-            elif self.screen == Screen.FILTER:
-                self.menuScr()
-            elif self.screen == Screen.HV:
-                if hv_en == 0:
-                    hv_en = 1
-                    self.hvScr4()
-            elif self.screen == Screen.SP:
-                if fil_sp == 0:
-                    fil_sp = 1
-                    self.spScr5()
-            elif self.screen == Screen.HP:
-                if hp_fil == 0:
-                    hp_fil = 1
-                    self.hpScr6()
-            elif self.screen == Screen.DE_EMPHASIS:
-                if de_emp == 0:
-                    de_emp = 1
-                    self.deScr7()
-            elif self.screen == Screen.NON_OSAMP:
-                if non_os == 0:
-                    non_os = 1
-                    self.nonScr8()
-            elif self.screen == Screen.PHASE_COMPENSATION:
-                if ph_comp == 0:
-                    ph_comp = 1
-                    self.phScr9()
-            else:
-                logger.error("Invalid screen: {}".format(self.screen))
+        if (
+            switches[Switch.LEFT]
+            or remote_interface.get_button_state(RemoteButton.LEFT) == 1
+        ):
+            self.handle_left()
 
-        if irm == 1:
-            time.sleep(0.1)
-            sec_flag = 1
-            irm = 0
-            mute = self.alsa.getMuteStatus(self.alsa.CONTROL.MA_CTRL)
-            if mute == 0:
-                self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 1)
-                self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 1)
-            else:
-                self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 0)
-                self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 0)
+        if remote_interface.get_button_state(RemoteButton.MUTE):
+            self.handle_mute()
 
-        if switches[Switch.OK] == 1 or irok == 1:
-            time.sleep(0.1)
-            irm_nflag = 0
-            if irok == 1:
-                irm_nflag = 1
-                irok = 0
-            if self.screen == Screen.INFO and irm_nflag == 0:
-                sec_flag = 1
-                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.MA_CTRL)
-                if mute == 0:
-                    self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 1)
-                    self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 1)
-                else:
-                    self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 0)
-                    self.alsa.setMuteStatus(self.alsa.CONTROL.DIG_CTRL, 0)
-            elif self.screen == Screen.MENU:
-                if m_indx == 1:
-                    self.bootScr()
-                elif m_indx == 2:
-                    self.hvScr4()
-                elif m_indx == 3:
-                    self.filtScr()
-                elif m_indx == 4:
-                    self.spScr5()
-            elif self.screen == Screen.BOOT:
-                self.menuScr()
-            elif self.screen == Screen.FILTER:
-                if f_indx == 1:
-                    self.phScr9()
-                elif f_indx == 2:
-                    self.hpScr6()
-                elif f_indx == 3:
-                    self.deScr7()
-                elif f_indx == 4:
-                    self.nonScr8()
-            elif self.screen == Screen.HV:
-                ok_flag = 0
-                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.HV_CTRL)
-                if mute != hv_en:
-                    self.alsa.setMuteStatus(self.alsa.CONTROL.HV_CTRL, hv_en)
-                self.menuScr()
-            elif self.screen == Screen.SP:
-                ok_flag = 0
-                filter_cur = self.alsa.getFilterStatus()
-                if filter_cur != fil_sp:
-                    self.alsa.setFilterStatus(fil_sp)
-                self.menuScr()
-            elif self.screen == Screen.HP:
-                ok_flag = 0
-                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.HP_CTRL)
-                if mute != hp_fil:
-                    self.alsa.setMuteStatus(self.alsa.CONTROL.HP_CTRL, hp_fil)
-                self.filtScr()
-            elif self.screen == Screen.DE_EMPHASIS:
-                ok_flag = 0
-                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.DE_CTRL)
-                if mute != de_emp:
-                    self.alsa.setMuteStatus(self.alsa.CONTROL.DE_CTRL, de_emp)
-                self.filtScr()
-            elif self.screen == Screen.NON_OSAMP:
-                ok_flag = 0
-                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.NON_CTRL)
-                if mute != non_os:
-                    self.alsa.setMuteStatus(self.alsa.CONTROL.NON_CTRL, non_os)
-                self.filtScr()
-            elif self.screen == Screen.PHASE_COMPENSATION:
-                ok_flag = 0
-                mute = self.alsa.getMuteStatus(self.alsa.CONTROL.PH_CTRL)
-                if mute != ph_comp:
-                    self.alsa.setMuteStatus(self.alsa.CONTROL.PH_CTRL, ph_comp)
-                self.filtScr()
+        if switches[Switch.OK] or remote_interface.get_button_state(RemoteButton.OK):
+            self.handle_ok()
 
-        if switches[Switch.UP] == 1 or ir3 == 1:
-            time.sleep(0.1)
-            ir3 = 0
-            if self.screen == Screen.INFO:
-                self._volume_up()
-                self.screenVol()
-            elif self.screen == Screen.MENU:
-                if m_indx > 1:
-                    m_indx -= 1
-                self.menuScr()
-            elif self.screen == Screen.FILTER:
-                if f_indx > 1:
-                    f_indx -= 1
-                self.filtScr()
+        if switches[Switch.UP] or remote_interface.get_button_state(RemoteButton.UP):
+            self.handle_up()
 
-        if switches[Switch.DOWN] == 1 or ir4 == 1:
-            time.sleep(0.1)
-            ir4 = 0
-            if self.screen == Screen.INFO:
-                self._volume_down()
-                self.screenVol()
-            elif self.screen == Screen.MENU:
-                m_indx += 1
-                if m_indx > 4:
-                    m_indx = 1
-                self.menuScr()
-            elif self.screen == Screen.FILTER:
-                f_indx += 1
-                if f_indx > 4:
-                    f_indx = 1
-                self.filtScr()
-            elif self.screen == Screen.HV:
-                if ok_flag == 0:
-                    ok_flag = 1
-                self.hvScr4()
-            elif self.screen == Screen.SP:
-                if ok_flag == 0:
-                    ok_flag = 1
-                self.spScr5()
-            elif self.screen == Screen.HP:
-                if ok_flag == 0:
-                    ok_flag = 1
-                self.self.hpScr6()
-            elif self.screen == Screen.DE_EMPHASIS:
-                if ok_flag == 0:
-                    ok_flag = 1
-                self.self.deScr7()
-            elif self.screen == Screen.NON_OSAMP:
-                if ok_flag == 0:
-                    ok_flag = 1
-                self.self.nonScr8()
-            elif self.screen == Screen.PHASE_COMPENSATION:
-                if ok_flag == 0:
-                    ok_flag = 1
-                self.self.phScr9()
+        if switches[Switch.DOWN] or remote_interface.get_button_state(
+            RemoteButton.DOWN
+        ):
+            self.handle_down()
 
-        if switches[Switch.RIGHT] == 1 or ir5 == 1:
-            time.sleep(0.1)
-            ir5 = 0
-            if self.screen == Screen.INFO:
-                self.lcd.clearScreen()
-                self.menuScr()
-            elif self.screen == Screen.MENU:
-                self.screenVol()
-            elif self.screen == Screen.BOOT:
-                self.menuScr()
-            elif self.screen == Screen.FILTER:
-                self.menuScr()
-            elif self.screen == Screen.HV:
-                if hv_en == 1:
-                    hv_en = 0
-                self.hvScr4()
-            elif self.screen == Screen.SP:
-                if fil_sp == 1:
-                    fil_sp = 0
-                self.spScr5()
-            elif self.screen == Screen.HP:
-                if hp_fil == 1:
-                    hp_fil = 0
-                self.hpScr6()
-            elif self.screen == Screen.DE_EMPHASIS:
-                if de_emp == 1:
-                    de_emp = 0
-                self.deScr7()
-            elif self.screen == Screen.NON_OSAMP:
-                if non_os == 1:
-                    non_os = 0
-                self.nonScr8()
-            elif self.screen == Screen.PHASE_COMPENSATION:
-                if ph_comp == 1:
-                    ph_comp = 0
-                self.phScr9()
+        if switches[Switch.RIGHT] or remote_interface.get_button_state(
+            RemoteButton.RIGHT
+        ):
+            self.handle_right()
 
         if sec_flag == 1:
             if self.screen == Screen.INFO:
@@ -874,6 +934,7 @@ def shutdown_lcd(lcd):
 def main():
     global h_name
     global lcd
+    global remote_interface
 
     logging.basicConfig(format=LOG_FORMAT, level=LOG_LEVEL)
     if os.name != "posix":
@@ -893,6 +954,8 @@ def main():
         exit(0)
 
     time.sleep(0.04)
+
+    remote_interface = RemoteInterface()
     ir = IRModule.IRRemote(callback="DECODE")
 
     init_gpio_bcm()
@@ -900,13 +963,13 @@ def main():
     GPIO.add_event_detect(IR_PIN, GPIO.BOTH, callback=ir.pWidth)
     logger.debug("Setting up IR callback")
     ir.set_callback(remote_callback)
-    ir.set_repeat(True)
 
     try:
         gui.screenVol()
         hp_fil, hv_en, non_os, ph_comp, de_emp, fil_sp = alsa_boss2.update_status()
         while True:
             gui.do_update()
+            time.sleep(0.1)
     except KeyboardInterrupt:
         logger.info("Interrupted by user.")
     finally:
