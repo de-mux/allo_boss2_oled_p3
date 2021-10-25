@@ -16,6 +16,7 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+import argparse
 from enum import auto, Enum, IntEnum
 import logging
 import os
@@ -46,7 +47,6 @@ SW4 = 8
 SW5 = 24
 RST = 12
 
-h_name = "Allo"
 A_CARD = "Boss2"
 A_CARD1 = "BOSS2"
 m_indx = 1
@@ -193,16 +193,18 @@ class GUI:
         self._ip_wan = ""
         self._hostname = ""
         self._scr0_ref_count = 0
-        # self._LED_FLAG = 0
+
+    def _get_hostname(self):
+        return "HOST:{}".format(socket.gethostname())
 
     def display_splash(self):
         lcd.display_off()
         self._ip_lan = get_ip_address("eth0")
         self._ip_wan = get_ip_address("wlan0")
-        h_name = "HOST:%s" % socket.gethostname()
+        host = self._get_hostname()
         lcd.displayStringNumber(self._ip_lan, 0, 0)
         lcd.displayStringNumber(self._ip_wan, 6, 0)
-        lcd.displayString(h_name, 2, 0)
+        lcd.displayString(host, 2, 0)
         lcd.displayString(A_CARD1, 4, 0)
         lcd.display_on()
         time.sleep(SPLASH_SCREEN_TIMEOUT)
@@ -267,7 +269,6 @@ class GUI:
         global non_os
         global ph_comp
 
-        # time.sleep(0.1)
         if self.screen == Screen.INFO:
             self.lcd.clearScreen()
             self.menuScr()
@@ -305,9 +306,7 @@ class GUI:
     def handle_mute(self):
         global sec_flag
 
-        # time.sleep(0.1)
         sec_flag = 1
-        # irm = 0
         mute = self.alsa.getMuteStatus(self.alsa.CONTROL.MA_CTRL)
         if mute == 0:
             self.alsa.setMuteStatus(self.alsa.CONTROL.MA_CTRL, 1)
@@ -321,7 +320,6 @@ class GUI:
         global mute
         global ok_flag
 
-        # time.sleep(0.1)
         irm_nflag = 0
         if self.screen == Screen.INFO and irm_nflag == 0:
             sec_flag = 1
@@ -393,7 +391,6 @@ class GUI:
         global f_indx
         global m_indx
 
-        # time.sleep(0.1)
         if self.screen == Screen.INFO:
             self._volume_up()
             self.screenVol()
@@ -411,7 +408,6 @@ class GUI:
         global m_indx
         global ok_flag
 
-        # time.sleep(0.1)
         if self.screen == Screen.INFO:
             self._volume_down()
             self.screenVol()
@@ -495,7 +491,6 @@ class GUI:
 
     def do_update(self):
         global m_indx
-        global h_name
         global alsa_cvol
         global f_indx
         global fil_sp
@@ -598,6 +593,7 @@ class GUI:
                 lcd.displayString("F-SPEED-SLO", 6, 0)
 
     def bootScr(self):
+        host = self._get_hostname()
         if self.screen != Screen.BOOT:
             self.screen = Screen.BOOT
             lcd.clearScreen()
@@ -606,7 +602,7 @@ class GUI:
         self._ip_wan = get_ip_address("wlan0")
         lcd.displayString(A_CARD1, 0, 0)
         lcd.displayStringNumber(self._ip_lan, 2, 0)
-        lcd.displayString(h_name, 4, 0)
+        lcd.displayString(host, 4, 0)
         lcd.displayStringNumber(self._ip_wan, 6, 0)
 
     def filtScr(self):
@@ -932,11 +928,19 @@ def shutdown_lcd(lcd):
 
 
 def main():
-    global h_name
     global lcd
     global remote_interface
 
-    logging.basicConfig(format=LOG_FORMAT, level=LOG_LEVEL)
+    parser = argparse.ArgumentParser(description="Run Allo Boss2 front panel interface")
+    parser.add_argument("--logfile", dest="log_file", action="store", default=None)
+    args = parser.parse_args()
+    if args.log_file:
+        logging.basicConfig(
+            filename=args.log_file, filemode="w", format=LOG_FORMAT, level=LOG_LEVEL
+        )
+    else:
+        logging.basicConfig(format=LOG_FORMAT, level=LOG_LEVEL)
+
     if os.name != "posix":
         sys.exit("platform not supported")
     reset_display_timeout()

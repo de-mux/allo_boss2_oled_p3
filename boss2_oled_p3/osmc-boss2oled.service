@@ -1,0 +1,17 @@
+[Unit]
+Description=OLED BOSS2 (OSMC)
+After=syslog.target network.target sound.target
+
+[Service]
+User=root
+Group=root
+
+Type=simple
+ExecStartPre=modprobe i2c-dev
+ExecStart=/home/osmc/pyenv/bin/python /home/osmc/debug/boss2/allo_boss2_oled_p3/boss2_oled_p3/boss2_oled.py --logfile /tmp/boss2.log
+Restart=on-abort
+RestartSec=2
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
