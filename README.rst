@@ -18,6 +18,11 @@ About
 This software provides the main front panel user interface and software control for the Allo Boss2.
 
 Forked from the official repository with some improvements to the UI and support for `OSMC <https://osmc.tv/>`_.
+Improvements:
+
+* more responsive front panel control
+* more responsive remote control
+* more readable UI font
 
 Supported OS
 ------------
