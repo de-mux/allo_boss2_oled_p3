@@ -1,11 +1,15 @@
-Allo Boss2 Install and User Interface
-=====================================
+Allo Boss2 installation and User Interface
+==========================================
 
-.. image:: doc/boss2-oled-1.jpg
-  :target: doc/boss2-oled-1.jpg
+.. container::
 
-.. image:: doc/boss2-oled-2.jpg
-  :target: doc/boss2-oled-2.jpg
+    .. image:: doc/boss2-oled-1.jpg
+       :target: doc/boss2-oled-1.jpg
+       :width: 45%
+
+    .. image:: doc/boss2-oled-2.jpg
+       :target: doc/boss2-oled-2.jpg
+       :width: 45%
 
 About
 -----
