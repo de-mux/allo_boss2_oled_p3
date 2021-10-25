@@ -1,16 +1,19 @@
 Allo Boss2 Install and User Interface
 =====================================
 
-[![OLED image 1](./doc/boss2-oled-1.jpg)](./doc/boss2-oled-1.jpg)
-[![OLED image 2](./doc/boss2-oled-2.jpg)](./doc/boss2-oled-2.jpg)
+.. image:: doc/boss2-oled-1.jpg
+  :target: doc/boss2-oled-1.jpg
+
+.. image:: doc/boss2-oled-2.jpg
+  :target: doc/boss2-oled-2.jpg
 
 About
 -----
 
-[Allo Boss2](https://www.allo.com/sparky/boss2-player.html) is a media player device built with Raspberry Pi and an add-on DAC.
+`Allo Boss2 <https://www.allo.com/sparky/boss2-player.html>`_ is a media player device built with Raspberry Pi and an add-on DAC.
 This software provides the main front panel user interface and software control for the Allo Boss2.
 
-Forked from the official repository with some improvements to the UI and support for [OSMC](https://osmc.tv/).
+Forked from the official repository with some improvements to the UI and support for `OSMC <https://osmc.tv/>`_.
 
 Supported OS
 ------------
@@ -29,7 +32,7 @@ Getting started
 Prerequisites - Hardware
 """"""""""""""""""""""""
 
-- [Allo Boss2](https://www.allo.com/sparky/boss2-player.html)
+- `Allo Boss2 <https://www.allo.com/sparky/boss2-player.html>`_
 
 Prerequisites - Software
 """"""""""""""""""""""""
@@ -40,4 +43,4 @@ Prerequisites - Software
 Install
 """""""
 
-See [README](boss2_oled_p3/README.rst) for installation steps.
+See `README <boss2_oled_p3/README.rst>`_ in the boss2_oled_p3 directory for installation steps.
