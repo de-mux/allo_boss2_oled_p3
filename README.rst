@@ -1,3 +1,8 @@
+|GPLv3 license|
+
+.. |GPLv3 license| image:: https://img.shields.io/github/license/de-mux/allo_boss2_oled_p3.svg
+   :target: http://www.gnu.org/licenses/gpl-3.0
+
 Allo Boss2 installation and User Interface
 ==========================================
 
